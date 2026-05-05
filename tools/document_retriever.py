@@ -1,5 +1,6 @@
 from langchain_community.vectores import Chroma
 from langchain_openai import OpenAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from config.settings import settings
 from pathlib import Path
@@ -13,7 +14,8 @@ def get_vectorestore() -> Chroma:
 
     global_vectorstore
     if _vectorestore is None:
-        embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
+        # embeddings = OpenAIEmbeddings(api_key=settings.openai_api_key)
+        embeddings = GoogleGenerativeAIEmbeddings(model=settings.model_name)
         _vectorstore = Chroma(
             persist_directory=settings.chroma_persist_dir,
             embedding_function=embeddings
