@@ -4,4 +4,4 @@ from agents.writer import WriterAgent
 from agents.researcher import ResearchAgent
 from agents.supervisor import SupervisorAgent
 
-__all__ = ['AnalystAgent', 'CriticAgent', 'WriterAgent', 'ResearchAgent', 'SupervisorAgent']
+__all__ = ['BaseAgent','AnalystAgent', 'CriticAgent', 'WriterAgent', 'ResearchAgent', 'SupervisorAgent']
