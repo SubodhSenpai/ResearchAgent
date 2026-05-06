@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from config.settings import settings
 
@@ -14,10 +15,15 @@ class BaseAgent(ABC):
     def __init__(self, name:str, system_prompt: str):
         self.name = name
         self.system_prompt = system_prompt
-        self.llm = ChatOpenAI(
+        # self.llm = ChatOpenAI(
+        #     model = settings.model_name,
+        #     temperature = settings.temperature,
+        #     api_key = settings.open_api_key
+        # )
+        self.llm = ChatGoogleGenerativeAI(
             model = settings.model_name,
             temperature = settings.temperature,
-            api_key = settings.open_api_key
+            api_key = settings.google_api_key
         )
         self._call_count = 0
 
