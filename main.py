@@ -154,6 +154,7 @@ if __name__ == "__main__":
 
     _validate_env()
 
+    # Default to 'api' for Railway/production. Set MODE=both for local development
     mode = os.getenv("MODE", "api").lower()
 
     match mode:

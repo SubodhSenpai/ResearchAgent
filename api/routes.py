@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -13,6 +14,15 @@ from graph.state import ResearchState
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AI Research Assistant", version="1.0.0")
+
+# Enable CORS for Streamlit Cloud and local development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 _graph = None
 
 # Track active research sessions for interrupt support
