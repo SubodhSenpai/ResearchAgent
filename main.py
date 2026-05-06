@@ -9,6 +9,7 @@ import urllib.request
 import uvicorn
 from config.settings import settings
 from dotenv import load_dotenv
+from api.routes import app  
 
 logging.basicConfig(
     level=logging.INFO,
