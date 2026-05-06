@@ -1,8 +1,6 @@
 import uuid
 import chromadb
 from chromadb.config import Settings as ChromaSettings
-from langchain_openai import OpenAIEmbeddings
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from config.settings import settings
 
 
@@ -18,12 +16,11 @@ class SessionMemory:
 
     def __init__(self):
         self.client = chromadb.PersistentClient(
-            path=settings.chroma_persist_dir,
+            path=settings.chroma_sessions_dir,
             settings=ChromaSettings(anonymized_telemetry=False)
             )
         
-        # self._embeddings = OpenAIEmbeddings(model='text-embeddings-3-small', api_key=settings.open_api_key)
-        self._embeddings = GoogleGenerativeAIEmbeddings(model=settings.model_name)
+        self._embeddings = settings.get_embeddings()
         
         self.collection = self.client.get_or_create_collection(
             name=self.COLLECTION_NAME,
@@ -35,7 +32,7 @@ class SessionMemory:
         session_id = str(uuid.uuid4())
         combined_text = f'QUERY: {query}\nANSWER: {answer}'
         embedding = self._embeddings.embed_query(combined_text)
-        self._collection.add(
+        self.collection.add(
             ids=[session_id],
             embeddings=[embedding],
             documents=[combined_text],
@@ -55,13 +52,13 @@ class SessionMemory:
         shown in the architecture diagram.
         '''
 
-        if self._collection.count() == 0:
+        if self.collection.count() == 0:
             return []
 
         embedding = self._embeddings.embed_query(query)
         results = self.collection.query(
             query_embeddings=[embedding],
-            n_results=min(k, self._collection.count()),
+            n_results=min(k, self.collection.count()),
             include=['documents', 'metadatas', 'distances']
         )
 
@@ -97,12 +94,12 @@ class SessionMemory:
 
     def count(self) -> int:
         '''Return the number of persisted sessions.'''
-        return self._collection.count()
+        return self.collection.count()
 
     def clear(self) -> None:
         '''Delete all stored sessions (useful in testing).'''
-        self._client.delete_collection(self.COLLECTION_NAME)
-        self._collection = self._client.get_or_create_collection(
+        self.client.delete_collection(self.COLLECTION_NAME)
+        self.collection = self.client.get_or_create_collection(
             name=self.COLLECTION_NAME,
             metadata={'hnsw:space': 'cosine'}
         )
