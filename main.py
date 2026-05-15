@@ -9,7 +9,8 @@ import urllib.request
 import uvicorn
 from config.settings import settings
 from dotenv import load_dotenv
-from api.routes import app  
+from api.routes import app
+from auth.database import init_db, close_db  
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,9 +41,16 @@ def _validate_env() -> None:
             " TAVILY_API_KEY (required for web search when using OpenAI models)"
         )
 
+    # Authentication & Database
+    if not settings.jwt_secret or len(settings.jwt_secret) < 32:
+        missing.append(" JWT_SECRET (must be at least 32 characters)")
+
+    if not settings.database_url:
+        missing.append(" DATABASE_URL (e.g., postgresql://user:password@localhost/research_agent_db)")
+
     if missing:
         logger.error("Missing required configuration:\n%s", "\n".join(missing))
-        logger.error("Create a .env file or export them before starting. Optional: LLM_PROVIDER=google|openai")
+        logger.error("Create a .env file or export them before starting.")
         sys.exit(1)
 
 def _ui_path() -> str:
@@ -68,9 +76,14 @@ def _wait_for_api(host: str, port: int, timeout: int = 3) -> bool:
     return False
 
 def run_api() -> None:
+    # Initialize database
+    if not init_db():
+        logger.error("Failed to initialize database")
+        sys.exit(1)
+
     host = os.getenv('HOST', '0.0.0.0')
     port = int(os.getenv('PORT', 8000))
-    reload = os.getenv("Reload", "false").lower() == "true"
+    reload = os.getenv("RELOAD", "false").lower() == "true"
 
     logger.info("Starting FastAPI - http://%s:%d", host, port)
     provider = "google (Gemini)" if settings.uses_google_llm() else "openai"
@@ -81,12 +94,16 @@ def run_api() -> None:
         settings.temperature,
     )
     logger.info(
-        "ChromaDB: sessions=%s | rag=%s",
+        "Storage: sessions=%s | pageindex=%s",
         settings.chroma_sessions_dir,
-        settings.chroma_rag_dir,
+        settings.pageindex_workspace_path,
     )
+    logger.info("Database: %s", settings.database_url.split("@")[1] if "@" in settings.database_url else "configured")
 
-    uvicorn.run("api.routes:app", host=host, port=port, reload=reload, log_level="info")
+    try:
+        uvicorn.run("api.routes:app", host=host, port=port, reload=reload, log_level="info")
+    finally:
+        close_db()
 
 
 def run_ui() -> None:
