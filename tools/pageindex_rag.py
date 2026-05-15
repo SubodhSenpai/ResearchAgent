@@ -172,6 +172,13 @@ def retrieve_documents_agentic(query: str, doc_ids: Optional[list[str]] = None, 
     selected_doc_id = list(search_docs.keys())[0]
 
     try:
+        # Check if the OpenAI Agents SDK is actually installed and not just our local 'agents' folder
+        import importlib.util
+        spec = importlib.util.find_spec("agents")
+        if spec is None or "site-packages" not in str(spec.origin):
+            # If not in site-packages, it's likely our local folder or missing
+            return retrieve_documents_simple(query, [selected_doc_id], user_id=user_id)
+
         from agents import Agent, Runner, function_tool
         import asyncio
         import concurrent.futures

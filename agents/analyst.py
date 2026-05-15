@@ -60,7 +60,18 @@ class AnalystAgent(BaseAgent):
             except Exception as e:
                 logger.debug(f"Could not retrieve memory context: {e}")
 
+            # ── Dynamic Prompting Safeguard ──────────────────────
+            web_search_enabled = state.get('web_search_enabled', True)
+            strict_guideline = ""
+            if not web_search_enabled:
+                strict_guideline = (
+                    "\nSTRICT SAFEGUARD: Web search is DISABLED. You MUST ONLY analyze the information provided in the "
+                    "'Documents from Knowledge Base' section. Do NOT mention missing web sources or external facts. "
+                    "Focus entirely on synthesizing the local documents.\n"
+                )
+
             chain = self._build_chain(
+                "{strict_guideline}\n\n"
                 "{memory_context}\n\n"
                 'Original Query: {query}\n\n'
                 'Research Plan:\n{plan}\n\n'
@@ -107,6 +118,7 @@ class AnalystAgent(BaseAgent):
             gaps_str = '\n'.join([f"- {g}" for g in research_gaps]) if research_gaps else "None identified."
 
             result = chain.invoke({
+                'strict_guideline': strict_guideline,
                 'memory_context': memory_context,
                 'query': state['query'],
                 'plan': plan_str,

@@ -68,13 +68,25 @@ class SupervisorAgent(BaseAgent):
 
         # Use LLM for intelligent routing and planning
         try:
+            # ── Dynamic Prompting Safeguard ──────────────────────
+            web_search_enabled = state.get('web_search_enabled', True)
+            strict_guideline = ""
+            if not web_search_enabled:
+                strict_guideline = (
+                    "\nSTRICT SAFEGUARD: Web search is DISABLED for this session. You MUST ONLY plan for and generate "
+                    "sub-queries that focus on the user's local documents / knowledge base. Do NOT plan for any web-based "
+                    "investigation. Your sub-queries will be used to retrieve specific sections from local PageIndex documents.\n"
+                )
+
             chain = self._build_chain(
+                "{strict_guideline}\n\n"
                 "{memory_context}\n\n"
                 "Chat History (Previous turns in this session):\n{chat_history}\n\n"
                 "Current User Query: {query}\n\n"
                 "Current State:\n"
                 "- Iteration: {iteration} / {max_iterations}\n"
-                "- Has search results: {has_search} ({num_results} results)\n"
+                "- Web search enabled: {web_search_enabled}\n"
+                "- Has search/KB results: {has_search} ({num_results} results)\n"
                 "- Has analysis: {has_analysis}\n"
                 "- Quality score: {quality_score}\n"
                 "- Research gaps: {gaps}\n"
@@ -83,7 +95,9 @@ class SupervisorAgent(BaseAgent):
             ) | self.parser
 
             result = chain.invoke({
+                'strict_guideline': strict_guideline,
                 'memory_context': memory_context,
+                'web_search_enabled': web_search_enabled,
                 'chat_history': chat_history_str,
                 'query': state['query'],
                 'iteration': next_iter,

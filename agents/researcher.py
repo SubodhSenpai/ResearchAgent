@@ -91,7 +91,12 @@ class ResearchAgent(BaseAgent):
             logger.info(f"Executing {len(unique_queries)} search queries: {[q[:50] for q in unique_queries]}")
 
             # ── Execute multi-query search ────────────────────────
-            search_results, source_urls = search_web_multi(unique_queries, max_results_per_query=5)
+            web_search_enabled = state.get('web_search_enabled', True)
+            if web_search_enabled:
+                search_results, source_urls = search_web_multi(unique_queries, max_results_per_query=5)
+            else:
+                logger.info("Web search disabled — skipping external search")
+                search_results, source_urls = [], []
 
             # Merge with existing results (for follow-up searches) - NEW FIRST
             existing_results = state.get('search_results', [])
@@ -134,8 +139,19 @@ class ResearchAgent(BaseAgent):
             chat_history = state.get('chat_history', [])
             chat_history_str = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in chat_history]) if chat_history else "No previous history."
 
+            # ── Dynamic Prompting Safeguard ──────────────────────
+            strict_guideline = ""
+            if not web_search_enabled:
+                strict_guideline = (
+                    "\nSTRICT SAFEGUARD: Web search is DISABLED. You MUST ONLY use the information provided in the "
+                    "'Documents from knowledge base' section below. Do NOT use your internal training data for facts, "
+                    "dates, or statistics. If the answer is not in the documents, explicitly state that the "
+                    "information is not available in the local knowledge base.\n"
+                )
+
             # ── Synthesize with LLM ──────────────────────────────
             chain = self._build_chain(
+                "{strict_guideline}\n\n"
                 "{memory_context}\n\n"
                 "Chat History (Previous turns in this session):\n{chat_history}\n\n"
                 "Current Query: {query}\n\n"
@@ -161,6 +177,7 @@ class ResearchAgent(BaseAgent):
             gaps_str = '\n'.join([f"- {g}" for g in research_gaps]) if research_gaps else "No specific gaps identified yet."
 
             result = chain.invoke({
+                'strict_guideline': strict_guideline,
                 'memory_context': memory_context,
                 'chat_history': chat_history_str,
                 'query': state['query'],

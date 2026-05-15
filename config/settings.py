@@ -17,8 +17,9 @@ class Settings:
     # LLM & Search Configuration
     open_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", "").strip())
     google_api_key: str = field(default_factory=_google_api_from_env)
+    gemini_api_key: str = field(default_factory=_google_api_from_env)
     tavily_api_key: str = field(default_factory=lambda: os.getenv("TAVILY_API_KEY", "").strip())
-    model_name: str = field(default_factory=lambda: os.getenv("MODEL_NAME", "").strip())
+    model_name: str = field(default_factory=lambda: os.getenv("MODEL_NAME", "gemini-2.5-flash").strip())
     temperature: float = 0.3
     max_iterations: int = 5
     quality_threshold: float = 0.7
@@ -72,36 +73,17 @@ class Settings:
         return self.pageindex_workspace
 
     def uses_google_llm(self) -> bool:
-        """
-        Prefer LLM_PROVIDER when set. Otherwise infer from MODEL_NAME:
-        - names starting with or containing 'gemini' -> Google
-        - otherwise -> OpenAI (e.g. gpt-4o, o1, o3)
-        """
-        override = os.getenv("LLM_PROVIDER", "").strip().lower()
-        if override in ("google", "gemini"):
-            return True
-        if override in ("openai",):
-            return False
-        name = (self.model_name or "").lower().strip()
-        if not name:
-            return False
-        return name.startswith("gemini") or "/gemini" in name
+        """Always use Google/Gemini for LLM tasks."""
+        return True
 
     def get_embeddings(self) -> Any:
-        """Embedding model appropriate for the current chat provider (not the chat model id)."""
-        if self.uses_google_llm():
-            from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        """Always use Google Generative AI Embeddings."""
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-            kwargs: dict[str, Any] = {"model": self.google_embedding_model}
-            if self.google_api_key:
-                kwargs["google_api_key"] = self.google_api_key
-            return GoogleGenerativeAIEmbeddings(**kwargs)
-        from langchain_openai import OpenAIEmbeddings
-
-        return OpenAIEmbeddings(
-            model=self.openai_embedding_model,
-            api_key=self.open_api_key or None,
-        )
+        kwargs: dict[str, Any] = {"model": self.google_embedding_model}
+        if self.gemini_api_key:
+            kwargs["google_api_key"] = self.gemini_api_key
+        return GoogleGenerativeAIEmbeddings(**kwargs)
 
     def validate(self) -> None:
         if not self.model_name:

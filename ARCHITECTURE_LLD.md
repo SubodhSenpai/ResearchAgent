@@ -16,7 +16,7 @@ Authentication Layer [color: red] {
 Client Layer [color: purple] {
   User [icon: user]
   
-  Streamlit UI [icon: python, label: "Streamlit UI\nui/app.py\n- Login/Register page\n- Chat history sidebar\n- Real-time research feed"]
+  Next.js Frontend [icon: react, label: "Next.js Frontend\nfrontend/src\n- Responsive Dashboard\n- Chat history & sessions\n- NDJSON streaming UI"]
   
   External API Client [icon: monitor, label: "API Client\nHTTP Client\nStores JWT in headers"]
 }
@@ -153,19 +153,19 @@ Testing [color: pink] {
 // ─────────────────────────────────────────────────────────────────────
 
 // ── CLIENT TO API ──────────────────────────────────────────────────
-User <> Streamlit UI: query · interaction
-Streamlit UI --> FastAPI Server: HTTP POST with JWT
+User <> Next.js Frontend: query · interaction
+Next.js Frontend --> FastAPI Server: HTTP POST with JWT
 External API Client --> FastAPI Server: HTTP REST calls
 
 // ── AUTHENTICATION FLOW ─────────────────────────────────────────────
-Streamlit UI --> Auth Endpoints: POST /auth/register
-Streamlit UI --> Auth Endpoints: POST /auth/login
+Next.js Frontend --> Auth Endpoints: POST /auth/register
+Next.js Frontend --> Auth Endpoints: POST /auth/login
 Auth Endpoints --> Auth Manager: validate credentials
 Auth Manager --> Password Manager: verify_password()
 Auth Manager --> JWT Handler: generate_jwt()
 JWT Handler --> Auth Endpoints: return access_token
-Auth Endpoints --> Streamlit UI: JWT token + user_id
-Streamlit UI --> Research Endpoints: Include JWT in headers
+Auth Endpoints --> Next.js Frontend: JWT token + user_id
+Next.js Frontend --> Research Endpoints: Include JWT in headers
 
 // ── DATABASE CONNECTIONS ──────────────────────────────────────────
 Auth Endpoints --> PostgreSQL: Store/verify user
@@ -262,7 +262,7 @@ Session Manager --> PostgreSQL: Insert into chat history
 Memory Manager --> Vector Database: Store embeddings
 Vector Database --> Vector Database: Index for future retrieval
 Research Endpoints --> FastAPI Server: Return final response
-FastAPI Server --> Streamlit UI: JSON response (streaming)
+FastAPI Server --> Next.js Frontend: NDJSON stream response
 
 // ── LONG-TERM MEMORY PERSISTENCE ──────────────────────────────────
 Chat History Table --> Memory Manager: Read on startup
@@ -271,10 +271,10 @@ Writer Agent --> Embeddings Generator: Embed final answer
 Embeddings Generator --> Vector Database: Store in user namespace
 
 // ── SESSION HISTORY ENDPOINTS ──────────────────────────────────────
-Streamlit UI --> Session Endpoints: GET /sessions (list all)
+Next.js Frontend --> Session Endpoints: GET /sessions (list all)
 Session Endpoints --> Session Manager: get_user_sessions()
 Session Manager --> PostgreSQL: SELECT * FROM sessions
-Streamlit UI --> Session Endpoints: GET /sessions/{session_id}
+Next.js Frontend --> Session Endpoints: GET /sessions/{session_id}
 Session Endpoints --> Session Manager: get_session_history()
 Session Manager --> PostgreSQL: Retrieve chat history + metadata
 
@@ -288,17 +288,17 @@ PostgreSQL --> Error Tracking: Log database connection errors
 // Error Recovery Paths
 Error Tracking --> Logging: Record detailed error context
 Error Tracking --> FastAPI Server: Return error to client (5xx)
-FastAPI Server --> Streamlit UI: Display error message to user
+FastAPI Server --> Next.js Frontend: Display error message to user
 
 // ── CLEANUP & LOGOUT ──────────────────────────────────────────────
-Streamlit UI --> Auth Endpoints: POST /auth/logout
+Next.js Frontend --> Auth Endpoints: POST /auth/logout
 Auth Endpoints --> Session Manager: Get user's active sessions
 Session Manager --> PostgreSQL: Check for in-progress research
 PostgreSQL --> Session Manager: Return session status
 Session Manager --> PostgreSQL: Mark active sessions as cancelled
 Session Manager --> PostgreSQL: Archive completed sessions
 Auth Endpoints --> JWT Handler: Invalidate JWT token
-Auth Endpoints --> Streamlit UI: Clear local auth tokens
+Auth Endpoints --> Next.js Frontend: Clear local auth tokens
 Session Endpoints --> PostgreSQL: DELETE /sessions/{session_id}
 PostgreSQL --> PostgreSQL: Mark as archived / soft delete
 PostgreSQL --> Vector Database: User namespace cleanup (optional)
@@ -537,7 +537,7 @@ Error Tracking --> Logging: Capture exceptions
 // → Return list of {session_id, query, timestamp, quality_score}
 // → User clicks session → GET /sessions/{session_id}/history
 // → Return chat_history: [{type: "user", content}, {type: "assistant", content}, ...]
-// → Streamlit renders chat in sidebar
+// → Next.js Frontend renders chat
 
 // FLOW 5: User Cancels Research (Interrupt)
 // User clicks "Cancel" during research → POST /interrupt (session_id, JWT)
@@ -788,16 +788,13 @@ Error Tracking --> Logging: Capture exceptions
 // │   ├── web_search.py
 // │   ├── document_retriever.py
 // │   └── memory_retrieval.py      (New: Retrieve past conversations)
-// ├── ui/
-// │   ├── app.py                   (Streamlit main)
-// │   ├── pages/
-// │   │   ├── login.py
-// │   │   ├── register.py
-// │   │   ├── research.py
-// │   │   └── history.py
-// │   └── components/
-// │       ├── chat_sidebar.py
-// │       ├── session_viewer.py
+// ├── frontend/
+// │   ├── src/                     (Next.js components)
+// │   ├── public/                  (Static assets)
+// │   ├── package.json             (Frontend dependencies)
+// │   └── tailwind.config.js       (Styling)
+// ├── requirements.txt             (Backend dependencies)
+// └── main.py                      (Backend entry point)
 // │       └── progress_monitor.py
 // ├── tests/
 // │   ├── __init__.py

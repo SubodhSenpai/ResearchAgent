@@ -33,6 +33,7 @@ export default function Dashboard() {
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [deleteConfirm, setDeleteConfirm] = useState(null); // session_id pending deletion
   const [documentsModalOpen, setDocumentsModalOpen] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(true);
   const abortRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -58,7 +59,7 @@ export default function Dashboard() {
 
     try {
       if (!sessionId) {
-        const session = await startResearch(activeQuery);
+        const session = await startResearch(activeQuery, webSearchEnabled);
         sessionId = session.session_id;
         setActiveSession({ session_id: sessionId, query: activeQuery, status: 'running', created_at: session.created_at });
       } else {
@@ -70,6 +71,7 @@ export default function Dashboard() {
       const controller = streamResearch(
         sessionId,
         activeQuery,
+        webSearchEnabled,
         (step) => setSteps((prev) => [...prev, { ...step, color: AGENT_COLORS[step.node] || '#6366f1' }]),
         (res) => {
           setResult(res);
@@ -305,6 +307,24 @@ export default function Dashboard() {
         {/* Bottom input bar */}
         <div className={`fixed bottom-0 right-0 px-12 pb-5 pt-4 bg-gradient-to-t from-bg-primary via-bg-primary/90 to-transparent z-10 transition-[left] duration-250 ease-in-out max-md:px-4 ${sidebarOpen ? 'left-[300px]' : 'left-0'}`}>
           <form onSubmit={handleStartResearch} className="max-w-[860px] mx-auto">
+            {/* Toggle bar */}
+            <div className="flex items-center justify-between mb-3 px-1">
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2 group cursor-pointer" onClick={() => setWebSearchEnabled(!webSearchEnabled)}>
+                  <div className={`relative w-8 h-4.5 rounded-full transition-colors duration-200 ${webSearchEnabled ? 'bg-accent' : 'bg-border-light'}`}>
+                    <div className={`absolute top-0.75 left-0.75 w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-200 ${webSearchEnabled ? 'translate-x-3.5' : 'translate-x-0'}`} />
+                  </div>
+                  <span className={`text-xs font-medium transition-colors ${webSearchEnabled ? 'text-text-primary' : 'text-text-muted group-hover:text-text-secondary'}`}>
+                    Enable Web Search
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-[10px] text-text-muted font-medium uppercase tracking-wider">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                {webSearchEnabled ? 'Deep Research Active' : 'Knowledge Base Only'}
+              </div>
+            </div>
+
             <div className="flex items-center gap-3 py-2 pl-4.5 pr-3 bg-bg-secondary/85 backdrop-blur-[20px] border border-border-light rounded-2xl shadow-[0_0_0_1px_rgba(99,102,241,0.05),0_8px_32px_rgba(0,0,0,0.4)] transition-all focus-within:border-accent focus-within:shadow-[0_0_0_3px_var(--color-accent-glow),0_8px_32px_rgba(0,0,0,0.4)]">
               <svg className="text-text-muted flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>

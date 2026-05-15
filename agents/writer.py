@@ -50,7 +50,19 @@ class WriterAgent(BaseAgent):
             chat_history = state.get('chat_history', [])
             chat_history_str = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in chat_history]) if chat_history else "No previous history."
 
+            # ── Dynamic Prompting Safeguard ──────────────────────
+            web_search_enabled = state.get('web_search_enabled', True)
+            strict_guideline = ""
+            if not web_search_enabled:
+                strict_guideline = (
+                    "\nSTRICT SAFEGUARD: Web search is DISABLED for this session. You MUST ONLY use the information provided in the "
+                    "'Analyst's Synthesis' and 'Raw search highlights' (which contain document snippets) below. "
+                    "Do NOT use any external knowledge, training data, or facts not present in the provided context. "
+                    "Focus entirely on the local documents.\n"
+                )
+
             chain = self._build_chain(
+                "{strict_guideline}\n\n"
                 "{memory_context}\n\n"
                 "Chat History (Previous turns in this session):\n{chat_history}\n\n"
                 'Current Query:\n{query}\n\n'
@@ -87,6 +99,7 @@ class WriterAgent(BaseAgent):
             ]) if search_results else "No search results."
 
             result = chain.invoke({
+                'strict_guideline': strict_guideline,
                 'memory_context': memory_context,
                 'chat_history': chat_history_str,
                 'query': state['query'],

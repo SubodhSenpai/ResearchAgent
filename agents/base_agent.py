@@ -1,11 +1,13 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
+import logging
 
 from config.settings import settings
 
+logger = logging.getLogger(__name__)
 
 class BaseAgent(ABC):
     '''
@@ -16,20 +18,18 @@ class BaseAgent(ABC):
     def __init__(self, name:str, system_prompt: str):
         self.name = name
         self.system_prompt = system_prompt
-        if settings.uses_google_llm():
-            from langchain_google_genai import ChatGoogleGenerativeAI
-
+        
+        # Use Gemini for all agents
+        try:
             self.llm = ChatGoogleGenerativeAI(
                 model=settings.model_name,
                 temperature=settings.temperature,
-                google_api_key=settings.google_api_key or None,
+                google_api_key=settings.gemini_api_key or None,
             )
-        else:
-            self.llm = ChatOpenAI(
-                model=settings.model_name,
-                temperature=settings.temperature,
-                api_key=settings.open_api_key or None,
-            )
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini for {name}: {e}")
+            self.llm = None
+        
         self._call_count = 0
 
     @abstractmethod

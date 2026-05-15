@@ -43,7 +43,7 @@ async def lifespan(app):
 
 app = FastAPI(title="AI Research Assistant", version="1.0.0", lifespan=lifespan)
 
-# Enable CORS for Streamlit Cloud and local development
+# Enable CORS for Next.js frontend and local development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -87,6 +87,7 @@ def _build_initial_state(
     user_id: str,
     jwt_token: str,
     max_iterations: int = 5,
+    web_search_enabled: bool = True,
     chat_history: list = None
 ) -> ResearchState:
     from datetime import datetime
@@ -119,6 +120,7 @@ def _build_initial_state(
         "iteration": 0,
         "max_iterations": max_iterations,
         "quality_score": 0.0,
+        "web_search_enabled": web_search_enabled,
         "interrupt_requested": False,
         "error": None,
     }
@@ -127,6 +129,7 @@ def _build_initial_state(
 class ResearchRequest(BaseModel):
     query: str
     max_iterations: int = 5
+    web_search_enabled: bool = True
 
 
 class ResearchStartResponse(BaseModel):
@@ -329,6 +332,9 @@ async def research_start(
     # Save initial user query to chat history
     session_manager.save_to_history(session_id, str(current_user.user_id), "user", request.query)
 
+    # Note: web_search_enabled is currently handled in the stream call,
+    # but we could store it in the session preferences if needed.
+
     logger.info(f"Research started. Session: {session_id}, User: {current_user.user_id}")
     return ResearchStartResponse(
         session_id=session_id,
@@ -377,6 +383,7 @@ async def get_research(
 class StreamRequest(BaseModel):
     query: Optional[str] = None
     max_iterations: int = 5
+    web_search_enabled: bool = True
 
 
 @app.post("/research/{session_id}/stream")
@@ -433,6 +440,7 @@ async def research_stream(
         user_id=str(current_user.user_id),
         jwt_token=jwt_token,
         max_iterations=request.max_iterations if request else 5,
+        web_search_enabled=request.web_search_enabled if request else True,
         chat_history=chat_history,
     )
 

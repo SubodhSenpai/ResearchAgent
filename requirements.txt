@@ -38,9 +38,6 @@ pyyaml
 litellm
 python-dotenv
 
-# UI
-streamlit
-
 # Utilities
 requests
 pydantic[email]
