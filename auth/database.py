@@ -21,6 +21,13 @@ def init_db():
         if not db_url:
             raise ValueError("DATABASE_URL is not configured")
 
+        # Fix for Railway/Heroku postgres URLs which often use postgresql://
+        # but SQLAlchemy >= 1.4 requires postgresql+psycopg2://
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+        elif db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+
         is_sqlite = db_url.startswith("sqlite")
 
         if is_sqlite:
