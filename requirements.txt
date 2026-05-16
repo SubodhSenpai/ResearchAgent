@@ -42,3 +42,4 @@ python-dotenv
 # Utilities
 requests
 pydantic[email]
+python-multipart
