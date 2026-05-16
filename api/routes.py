@@ -48,6 +48,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://research-agent-eight-rho.vercel.app",
+        "https://research-agent-eight-rho.vercel.app/",
         "https://research-agent-six.vercel.app",
         "https://research-agent-git-main-subodhsenpais-projects.vercel.app",
         "http://localhost:3000",
