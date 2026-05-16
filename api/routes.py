@@ -46,7 +46,12 @@ app = FastAPI(title="AI Research Assistant", version="1.0.0", lifespan=lifespan)
 # Enable CORS for Next.js frontend and local development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://research-agent-git-main-subodhsenpais-projects.vercel.app",
+        "https://research-agent-six.vercel.app",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
