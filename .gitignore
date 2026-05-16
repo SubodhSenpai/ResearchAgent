@@ -216,3 +216,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Databases and data directories
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Frontend
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# PageIndex
+pageindex_data/
+PageIndex/

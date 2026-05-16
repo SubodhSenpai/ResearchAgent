@@ -1,82 +1,234 @@
 from agents.base_agent import BaseAgent
-from tools.web_search import search_web
+from tools.web_search import search_web_multi
 from tools.document_retriever import retrieve_documents
+from tools.memory_retrieval import MemoryRetrievalTool
 import logging
 
 logger = logging.getLogger(__name__)
 
-RESEARCHER_PROMPTS = '''You are a thorough research specialist gathering information for complex queries.
-Your job is to:
-1. Conduct comprehensive web search to find relevant information
-2. Identify key facts, perspectives, and authoritative sources
-3. Retrieve supporting documents from the knowledge base
-4. Summarize findings in structured format
-5. Note any gaps or uncertainties in the data
+RESEARCHER_PROMPT = '''You are a thorough research specialist. Your job is to gather comprehensive, 
+high-quality information from multiple angles for the user's research query.
 
-Be thorough but focus on high-quality, authoritative sources.
-Always try to provide multiple perspectives on the topic.
-Include source URLs and citations where available.
+Given the search results and documents provided, synthesize a detailed research summary that:
+
+1. **Extracts key facts** — specific data points, statistics, dates, names, and figures
+2. **Identifies multiple perspectives** — cover different viewpoints and interpretations
+3. **Notes source quality** — distinguish between authoritative sources vs. opinions
+4. **Flags gaps** — explicitly mention what information is missing or couldn't be found
+5. **Preserves source attribution** — always mention which source each fact comes from
+6. **Builds on prior research** — incorporate relevant context from past research sessions
+
+Structure your response as:
+## Key Findings
+(Bullet points of main facts with source attribution)
+
+## Detailed Evidence
+(Organized by sub-topic with evidence from sources)
+
+## Source Assessment
+(Brief evaluation of source quality and reliability)
+
+## Information Gaps
+(What's still unknown or needs further investigation)
+
+Be thorough, precise, and evidence-based. Never fabricate information.
 '''
+
 
 class ResearchAgent(BaseAgent):
     def __init__(self):
-        super().__init__('Researcher', RESEARCHER_PROMPTS)
+        super().__init__('Researcher', RESEARCHER_PROMPT)
 
     def run(self, state: dict) -> dict:
         iteration = state.get('iteration', 0)
+        user_id = state.get('user_id')
         self._log(f'Gathering research (iteration {iteration}): {state["query"][:60]}...')
 
         try:
-            # Search the web (cap at 10 results to avoid memory bloat)
-            logger.info(f"Searching web for: {state['query']}")
-            search_results = search_web(state['query'], max_results=10)[:10]
-            logger.info(f"Found {len(search_results)} web results")
+            # Get memory context for this user
+            memory_context = ""
+            try:
+                from auth.database import SessionLocal
+                if user_id:
+                    db = SessionLocal()
+                    memory_tool = MemoryRetrievalTool(user_id, db)
+                    memory_context = memory_tool.get_researcher_context(state.get('query', ''))
+                    db.close()
+            except Exception as e:
+                logger.debug(f"Could not retrieve memory context: {e}")
 
-            # Retrieve from vector store (RAG)
-            logger.info("Retrieving documents from knowledge base")
-            rag_docs = retrieve_documents(state['query'], k=5)
-            logger.info(f"Retrieved {len(rag_docs)} documents")
+            # ── Build search queries ──────────────────────────────
+            # Use sub-queries from supervisor if available, otherwise use the raw query
+            sub_queries = state.get('sub_queries', [])
+            research_gaps = state.get('research_gaps', [])
 
-            # Synthesize raw findings
-            chain = self._build_chain(
-                "Query: {query}\n\n"
-                "Search results found:\n{results}\n\n"
-                "Documents from knowledge base:\n{docs}"
-            )
+            # Always include the main query
+            search_queries = [state['query']]
 
-            # Format data for LLM (with limits)
-            search_str = '\n'.join([
-                f"- {str(r)[:300]}" for r in search_results[:3]
-            ]) if search_results else "No search results available."
+            # Add supervisor-generated sub-queries
+            if sub_queries:
+                search_queries.extend(sub_queries[:4])  # Cap at 4 additional sub-queries
 
-            docs_str = '\n'.join([
-                f"- {str(d)[:300]}" for d in rag_docs[:2]
-            ]) if rag_docs else "No documents available."
+            # If critic identified gaps, create targeted follow-up searches
+            if research_gaps:
+                for gap in research_gaps[:3]:  # Max 3 gap-filling searches
+                    gap_query = f"{state['query']} {gap}"
+                    search_queries.append(gap_query)
+                logger.info(f"Added {min(len(research_gaps), 3)} gap-filling searches: {research_gaps[:3]}")
 
-            result = chain.invoke({
-                'query': state['query'],
-                'results': search_str,
-                'docs': docs_str
+            # Deduplicate queries (case-insensitive)
+            seen = set()
+            unique_queries = []
+            for q in search_queries:
+                q_lower = q.strip().lower()
+                if q_lower not in seen:
+                    seen.add(q_lower)
+                    unique_queries.append(q.strip())
+
+            # Cap total queries to avoid excessive API usage
+            unique_queries = unique_queries[:6]
+
+            logger.info(f"Executing {len(unique_queries)} search queries: {[q[:50] for q in unique_queries]}")
+            session_id = state.get('session_id', 'unknown')
+            self.trace(session_id, "input", {"queries": unique_queries, "iteration": iteration})
+
+            # ── Execute multi-query search ────────────────────────
+            web_search_enabled = state.get('web_search_enabled', True)
+            if web_search_enabled:
+                search_results, source_urls = search_web_multi(unique_queries, max_results_per_query=5)
+                self.trace(session_id, "retrieval", {
+                    "source": "web", 
+                    "count": len(search_results),
+                    "results": [
+                        {"title": r.get('title'), "url": r.get('url'), "snippet": str(r.get('content', ''))[:200]} 
+                        for r in search_results[:5]
+                    ]
+                })
+            else:
+                logger.info("Web search disabled — skipping external search")
+                search_results, source_urls = [], []
+
+            # Merge with existing results (for follow-up searches) - NEW FIRST
+            existing_results = state.get('search_results', [])
+            existing_urls = state.get('source_urls', [])
+            
+            all_results = []
+            seen_urls = set()
+            
+            # Prioritize NEW results so gap-filling queries don't get truncated out
+            for r in search_results + existing_results:
+                url = r.get('url', '')
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    all_results.append(r)
+                elif not url:
+                    all_results.append(r)
+
+            all_urls = existing_urls.copy()
+            existing_url_set = {u.get('url', '') for u in existing_urls}
+            for u in source_urls:
+                if u.get('url', '') not in existing_url_set:
+                    all_urls.append(u)
+                    existing_url_set.add(u['url'])
+
+            logger.info(f"Total: {len(all_results)} results, {len(all_urls)} unique sources")
+
+            # ── Retrieve from PageIndex RAG (hierarchical, OCR-enabled) ──────────────────
+            logger.info("Retrieving documents from PageIndex knowledge base")
+            rag_docs = []
+            seen_docs = set()
+            for q in unique_queries[:3]:  # Search for main + top sub-queries
+                docs = retrieve_documents(q, user_id=str(user_id) if user_id else "", k=3)
+                for d in docs:
+                    if d not in seen_docs:
+                        seen_docs.add(d)
+                        rag_docs.append(d)
+            logger.info(f"Retrieved {len(rag_docs)} unique document sections from PageIndex")
+            self.trace(session_id, "retrieval", {
+                "source": "pageindex", 
+                "count": len(rag_docs),
+                "results": [str(d)[:300] for d in rag_docs[:5]]
             })
 
+            # Format chat history
+            chat_history = state.get('chat_history', [])
+            chat_history_str = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in chat_history]) if chat_history else "No previous history."
+
+            # ── Dynamic Prompting Safeguard ──────────────────────
+            strict_guideline = ""
+            if not web_search_enabled:
+                strict_guideline = (
+                    "\nSTRICT SAFEGUARD: Web search is DISABLED. You MUST ONLY use the information provided in the "
+                    "'Documents from knowledge base' section below. Do NOT use your internal training data for facts, "
+                    "dates, or statistics. If the answer is not in the documents, explicitly state that the "
+                    "information is not available in the local knowledge base.\n"
+                )
+
+            # ── Synthesize with LLM ──────────────────────────────
+            chain = self._build_chain(
+                "{strict_guideline}\n\n"
+                "{memory_context}\n\n"
+                "Chat History (Previous turns in this session):\n{chat_history}\n\n"
+                "Current Query: {query}\n\n"
+                "Search queries executed: {search_queries}\n\n"
+                "Web search results ({num_results} total):\n{results}\n\n"
+                "Documents from knowledge base:\n{docs}\n\n"
+                "Research gaps to fill (from previous critique):\n{gaps}"
+            )
+
+            # Format search results — show MORE data to the LLM (up to 12 results, 1500 chars each)
+            search_str = '\n\n'.join([
+                f"[Source {i+1}] {r.get('title', 'Untitled')}\n"
+                f"URL: {r.get('url', 'N/A')}\n"
+                f"Content: {str(r.get('content', ''))[:1500]}"
+                for i, r in enumerate(all_results[:12])
+            ]) if all_results else "No search results available."
+
+            docs_str = '\n\n'.join([
+                f"[Document {i+1}]: {str(d)[:5000]}"
+                for i, d in enumerate(rag_docs[:8])
+            ]) if rag_docs else "No documents available."
+
+            gaps_str = '\n'.join([f"- {g}" for g in research_gaps]) if research_gaps else "No specific gaps identified yet."
+            
+            prompt_content = f"WEB:\n{search_str}\n\nDOCS:\n{docs_str}"
+            self.trace(session_id, "prompt", {"content": prompt_content})
+
+            result = chain.invoke({
+                'strict_guideline': strict_guideline,
+                'memory_context': memory_context,
+                'chat_history': chat_history_str,
+                'query': state['query'],
+                'search_queries': ', '.join(unique_queries),
+                'num_results': len(all_results),
+                'results': search_str,
+                'docs': docs_str,
+                'gaps': gaps_str,
+            })
+
+            self.trace(session_id, "llm_response", {"content": result.content})
+
             summary = result.content
-            summary_preview = summary[:150] + "..." if len(summary) > 150 else summary
+            summary_preview = summary[:200] + "..." if len(summary) > 200 else summary
             logger.info(f"Research summary: {summary_preview}")
 
             return {
                 **state,
-                'search_results': search_results,
+                'search_results': all_results,
+                'source_urls': all_urls,
+                'sub_queries': unique_queries,
                 'documents': rag_docs,
-                'messages': state['messages'] + [f'Researcher: {summary_preview}']
+                'messages': state['messages'] + [f'Researcher: Gathered {len(all_results)} results from {len(unique_queries)} queries. {summary_preview}']
             }
 
         except Exception as e:
-            error_msg = f'Research error: {str(e)[:100]}'
+            error_msg = f'Research error: {str(e)[:150]}'
             logger.error(error_msg)
             return {
                 **state,
-                'search_results': [],
-                'documents': [],
+                'search_results': state.get('search_results', []),
+                'source_urls': state.get('source_urls', []),
+                'documents': state.get('documents', []),
                 'messages': state['messages'] + [error_msg],
                 'error': error_msg
             }

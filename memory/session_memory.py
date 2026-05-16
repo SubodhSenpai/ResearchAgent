@@ -27,9 +27,17 @@ class SessionMemory:
             metadata={'hnsw:space': 'cosine'}
         )
 
-    def save_session(self, query: str, answer: str, quality_score: float, documents: list[str] | None = None):
-        '''Persist a completed research session. Return the session id. '''
-        session_id = str(uuid.uuid4())
+    def save_session(
+        self,
+        session_id: str,
+        user_id: str,
+        query: str,
+        answer: str,
+        quality_score: float,
+        timestamp: str,
+        documents: list[str] | None = None
+    ):
+        '''Persist a completed research session with full session/user context.'''
         combined_text = f'QUERY: {query}\nANSWER: {answer}'
         embedding = self._embeddings.embed_query(combined_text)
         self.collection.add(
@@ -37,19 +45,20 @@ class SessionMemory:
             embeddings=[embedding],
             documents=[combined_text],
             metadatas=[{
+                'session_id': session_id,
+                'user_id': user_id,
                 'query': query,
                 'answer': answer,
                 'quality_score': str(quality_score),
+                'timestamp': timestamp,
                 'source_count': str(len(documents or []))
             }]
         )
-        return session_id
 
-    def retrieve_similar(self, query: str, k: int = 4) -> list[dict]:
+    def retrieve_similar(self, query: str, user_id: str, k: int = 4) -> list[dict]:
         '''
-        Return up to k past sessions whose answers are semantically 
-        similar to the current query. Mirrors similartiy_search(query,k)
-        shown in the architecture diagram.
+        Return up to k past sessions whose answers are semantically
+        similar to the current query, filtered by user_id for isolation.
         '''
 
         if self.collection.count() == 0:
@@ -59,6 +68,7 @@ class SessionMemory:
         results = self.collection.query(
             query_embeddings=[embedding],
             n_results=min(k, self.collection.count()),
+            where={"user_id": {"$eq": user_id}},
             include=['documents', 'metadatas', 'distances']
         )
 
@@ -71,20 +81,22 @@ class SessionMemory:
         ):
             sessions.append({
                 'text': doc,
+                'session_id': meta.get('session_id', ''),
                 'query': meta.get('query', ''),
                 'answer': meta.get('answer', ''),
                 'quality_score': float(meta.get('quality_score', 0)),
-                'similarity': round(1-dist, 4)   #Cosine distance -> similarity
+                'timestamp': meta.get('timestamp', ''),
+                'similarity': round(1-dist, 4)
             })
 
         return sessions
 
-    def is_cache_hit(self, query: str, threshold: float = 0.92) -> str | None:
-        ''' 
-        Return an cached answer if a near-identical query was already answered at the high quality.
-        Prevents redundant LLM calls for repeat questions.
+    def is_cache_hit(self, query: str, user_id: str, threshold: float = 0.92) -> str | None:
         '''
-        results = self.retrieve_similar(query, k=1)
+        Return a cached answer if a near-identical query was already answered at high quality,
+        filtered to the specific user for memory isolation.
+        '''
+        results = self.retrieve_similar(query, user_id=user_id, k=1)
 
         if results and results[0]['similarity'] >= threshold:
             score = results[0]['quality_score']

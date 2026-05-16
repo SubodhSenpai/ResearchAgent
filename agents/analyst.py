@@ -1,19 +1,42 @@
 from agents.base_agent import BaseAgent
+from tools.memory_retrieval import MemoryRetrievalTool
 import logging
 
 logger = logging.getLogger(__name__)
 
-ANALYST_PROMPT = '''You are a senior research analyst synthesizing information for accuracy and insight.
-Given raw search results and retrieved documents, your job is to:
-1. Identify the most important facts and patterns from the evidence
-2. Synthesize findings into a coherent, well-organized narrative
-3. Draw logical, well-supported conclusions
-4. Flag any gaps in evidence, contradictions, or areas needing more research
-5. Organize your analysis with clear sections and bullet points where helpful
+ANALYST_PROMPT = '''You are a senior research analyst performing deep synthesis of multi-source research data.
+Your role is to transform raw search results into a rigorous, well-structured analysis.
 
-Be precise and cite sources where possible. Write for an intelligent, technical audience.
-Your analysis will be reviewed for quality, so ensure all claims are well-supported by the evidence provided.
-'''
+Given the search results, documents, and any prior critique feedback, you must:
+
+1. **Cross-reference sources** — compare claims across multiple sources for consistency
+2. **Identify patterns** — find recurring themes, trends, and consensus across sources
+3. **Evaluate evidence strength** — distinguish strong evidence from speculation or opinion
+4. **Synthesize a coherent narrative** — organize findings into a logical, flowing analysis
+5. **Highlight contradictions** — note where sources disagree and provide context
+6. **Address critique feedback** — if prior critique exists, specifically address the issues raised
+7. **Identify remaining gaps** — clearly list what questions remain unanswered
+
+Structure your analysis with clear sections:
+
+## Executive Summary
+(2-3 sentence overview of key findings)
+
+## Detailed Analysis
+(Organized by sub-topic with evidence from multiple sources)
+
+## Cross-Source Validation
+(Where sources agree/disagree, evidence strength assessment)
+
+## Conclusions
+(Well-supported conclusions drawn from the evidence)
+
+## Remaining Gaps
+(Specific questions or areas that need more research)
+
+Be precise, cite sources where possible, and maintain analytical rigor throughout.
+Write for an intelligent, technical audience.'''
+
 
 class AnalystAgent(BaseAgent):
     def __init__(self):
@@ -21,43 +44,109 @@ class AnalystAgent(BaseAgent):
 
     def run(self, state: dict) -> dict:
         iteration = state.get('iteration', 0)
+        session_id = state.get('session_id', 'unknown')
+        self.trace(session_id, "input", {"query": state['query'], "iteration": iteration})
         self._log(f'Synthesizing findings (iteration {iteration})')
 
-        chain = self._build_chain(
-            'Query: {query}\n\n'
-            'Search results:\n{search_results}\n\n'
-            'Retrieved documents:\n{documents}\n\n'
-            'Previous critique (if any):\n{critique}'
-        )
-
         try:
-            # Prepare inputs, limiting data size
-            search_results = state.get('search_results', [])[:5]
-            documents = state.get('documents', [])[:3]
-            critique = state.get('critique', '')
+            # Get memory context for this user
+            memory_context = ""
+            try:
+                from auth.database import SessionLocal
+                user_id = state.get('user_id')
+                if user_id:
+                    db = SessionLocal()
+                    memory_tool = MemoryRetrievalTool(user_id, db)
+                    memory_context = memory_tool.get_analyst_context(state.get('query', ''))
+                    db.close()
+            except Exception as e:
+                logger.debug(f"Could not retrieve memory context: {e}")
 
-            # Format data for LLM
-            search_str = '\n'.join([
-                f"- {str(r)[:500]}" for r in search_results
+            # ── Dynamic Prompting Safeguard ──────────────────────
+            web_search_enabled = state.get('web_search_enabled', True)
+            strict_guideline = ""
+            if not web_search_enabled:
+                strict_guideline = (
+                    "\nSTRICT SAFEGUARD: Web search is DISABLED. You MUST ONLY analyze the information provided in the "
+                    "'Documents from Knowledge Base' section. Do NOT mention missing web sources or external facts. "
+                    "Focus entirely on synthesizing the local documents.\n"
+                )
+
+            chain = self._build_chain(
+                "{strict_guideline}\n\n"
+                "{memory_context}\n\n"
+                'Original Query: {query}\n\n'
+                'Research Plan:\n{plan}\n\n'
+                'Search queries executed: {sub_queries}\n\n'
+                'Web search results ({num_results} total):\n{search_results}\n\n'
+                'Knowledge base documents:\n{documents}\n\n'
+                'Available sources for citation:\n{sources}\n\n'
+                'Previous critique feedback (address these issues):\n{critique}\n\n'
+                'Validator Findings (Audit):\n'
+                '- Completeness: {completeness_score}%\n'
+                '- Evidence Gaps: {evidence_gaps}\n'
+                '- Contradictions found: {contradictions}\n\n'
+                'Research gaps to address:\n{gaps}'
+            )
+
+            # Prepare inputs with MUCH higher data limits
+            search_results = state.get('search_results', [])
+            documents = state.get('documents', [])
+            source_urls = state.get('source_urls', [])
+            critique = state.get('critique', '')
+            research_gaps = state.get('research_gaps', [])
+            plan = state.get('plan', [])
+            sub_queries = state.get('sub_queries', [])
+
+            # Format search results — show up to 15 results, 1500 chars each
+            search_str = '\n\n'.join([
+                f"[Source {i+1}] {r.get('title', 'Untitled')}\n"
+                f"URL: {r.get('url', 'N/A')}\n"
+                f"Content: {str(r.get('content', ''))[:1500]}"
+                for i, r in enumerate(search_results[:15])
             ]) if search_results else "No search results available."
 
-            docs_str = '\n'.join([
-                f"- {str(d)[:500]}" for d in documents
+            # Format documents — significantly more generous limits
+            docs_str = '\n\n'.join([
+                f"[Document {i+1}]: {str(d)[:5000]}"
+                for i, d in enumerate(documents[:8])
             ]) if documents else "No documents available."
 
-            critique_str = critique if critique else "Not yet - this is the first pass."
+            # Format source URLs for citation reference
+            sources_str = '\n'.join([
+                f"[{i+1}] {s.get('title', 'Untitled')} — {s.get('url', 'N/A')}"
+                for i, s in enumerate(source_urls[:15])
+            ]) if source_urls else "No sources tracked."
+
+            critique_str = critique if critique else "No prior critique — this is the first analysis pass."
+            plan_str = '\n'.join([f"- {p}" for p in plan]) if plan else "No specific plan."
+            sub_queries_str = ', '.join(sub_queries) if sub_queries else "Single query search"
+            gaps_str = '\n'.join([f"- {g}" for g in research_gaps]) if research_gaps else "None identified."
+
+            self.trace(session_id, "prompt", {"content": "Analyst Synthesis Prompt (Dynamic context applied)"})
 
             result = chain.invoke({
+                'strict_guideline': strict_guideline,
+                'memory_context': memory_context,
                 'query': state['query'],
+                'plan': plan_str,
+                'sub_queries': sub_queries_str,
+                'num_results': len(search_results),
                 'search_results': search_str,
                 'documents': docs_str,
-                'critique': critique_str
+                'sources': sources_str,
+                'critique': critique_str,
+                'gaps': gaps_str,
+                'completeness_score': state.get('completeness_score', 0),
+                'evidence_gaps': ', '.join(state.get('evidence_gaps', [])) if state.get('evidence_gaps') else 'None',
+                'contradictions': str(state.get('contradictions', [])),
             })
 
             analysis_text = result.content
-            summary = analysis_text[:200] + "..." if len(analysis_text) > 200 else analysis_text
+            self.trace(session_id, "llm_response", {"content": analysis_text})
+            summary = analysis_text[:250] + "..." if len(analysis_text) > 250 else analysis_text
 
-            logger.info(f"Analysis completed (iteration {iteration}): {summary}")
+            logger.info(f"Analysis completed (iteration {iteration}): {summary[:150]}")
 
             return {
                 **state,
@@ -66,6 +155,7 @@ class AnalystAgent(BaseAgent):
             }
 
         except Exception as e:
+            self.trace(session_id, "error", {"detail": str(e)})
             error_msg = f'Analyst error: {str(e)[:150]}'
             logger.error(error_msg)
             return {
