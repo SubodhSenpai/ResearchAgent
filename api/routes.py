@@ -43,17 +43,21 @@ async def lifespan(app):
 
 app = FastAPI(title="AI Research Assistant", version="1.0.0", lifespan=lifespan)
 
-# Enable CORS for Next.js frontend and local development
+# CORS: browsers send Origin on cross-origin requests; preflight OPTIONS must echo it back.
+_DEFAULT_CORS_ORIGINS = [
+    "https://research-agent-eight-rho.vercel.app",
+    "https://research-agent-six.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+_extra_cors = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+_cors_origins = list(dict.fromkeys(_DEFAULT_CORS_ORIGINS + _extra_cors))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://research-agent-eight-rho.vercel.app",
-        "https://research-agent-eight-rho.vercel.app/",
-        "https://research-agent-six.vercel.app",
-        "https://research-agent-git-main-subodhsenpais-projects.vercel.app",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
-    ],
+    allow_origins=_cors_origins,
+    # Production + Vercel preview URLs (e.g. research-agent-git-main-….vercel.app)
+    allow_origin_regex=r"https://research-agent[-a-z0-9.]*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
