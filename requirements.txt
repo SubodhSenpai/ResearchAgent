@@ -31,7 +31,7 @@ langchain-tavily
 
 # Vector Store & RAG
 chromadb
--e ./PageIndex
+# -e ./PageIndex
 PyPDF2
 pymupdf
 pyyaml
