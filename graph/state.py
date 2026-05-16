@@ -22,6 +22,12 @@ class ResearchState(TypedDict):
     research_gaps: List[str]            # Gaps identified by critic for follow-up research
     final_answer: Optional[str]         # Writer's output
 
+    # ━━━ EVIDENCE VALIDATION ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    completeness_score: int             # Validator's score (0-100)
+    evidence_gaps: List[str]            # Missing facts found by Validator
+    contradictions: List[dict]          # Conflicting facts across sources
+    validator_recommendation: Optional[str] # FINALIZE | TARGETED_SEARCH
+
     # ━━━ EXECUTION CONTROL & METADATA ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     messages: List[str]                 # Agent message log
     _next: Optional[str]               # Next agent routing hint (set by supervisor)

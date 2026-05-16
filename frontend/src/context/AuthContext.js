@@ -25,16 +25,24 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const [authMessage, setAuthMessage] = useState(null);
+
   // Listen for forced logout (401 from API)
   useEffect(() => {
-    const handler = () => {
+    const handler = (e) => {
       setUser(null);
+      if (e.detail?.message) {
+        setAuthMessage(e.detail.message);
+      } else {
+        setAuthMessage('Session expired. Please log in again.');
+      }
     };
     window.addEventListener('auth:logout', handler);
     return () => window.removeEventListener('auth:logout', handler);
   }, []);
 
   const login = useCallback(async (username, password) => {
+    setAuthMessage(null); // Clear any expiration messages on new login attempt
     await apiLogin(username, password);
     const me = await getMe();
     setUser(me);
@@ -42,6 +50,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const register = useCallback(async (username, email, password) => {
+    setAuthMessage(null);
     const newUser = await apiRegister(username, email, password);
     return newUser;
   }, []);
@@ -51,11 +60,12 @@ export function AuthProvider({ children }) {
       await apiLogout();
     } finally {
       setUser(null);
+      setAuthMessage(null);
     }
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, isAuthenticated: !!user, authMessage, setAuthMessage }}>
       {children}
     </AuthContext.Provider>
   );

@@ -5,6 +5,7 @@ from agents.researcher import ResearchAgent
 from agents.analyst import AnalystAgent
 from agents.critic import CriticAgent
 from agents.writer import WriterAgent
+from agents.validator import ValidatorAgent
 from memory.session_memory import SessionMemory
 import logging
 
@@ -19,6 +20,7 @@ def build_research_graph():
     analyst = AnalystAgent()
     critic = CriticAgent()
     writer = WriterAgent()
+    validator = ValidatorAgent()
     memory = SessionMemory()
 
     def memory_check_node(state: ResearchState) -> ResearchState:
@@ -78,6 +80,7 @@ def build_research_graph():
     graph.add_node('researcher', researcher.run)
     graph.add_node('analyst', analyst.run)
     graph.add_node('critic', critic.run)
+    graph.add_node('validator', validator.run)
     graph.add_node('writer', writer.run)
     graph.add_node('save_memory', save_to_memory)
     graph.add_node('interrupt_check', interrupt_check)
@@ -101,8 +104,11 @@ def build_research_graph():
 
     # ━━━ Edges ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    # Researcher always reports back to supervisor for next decision
-    graph.add_edge('researcher', 'supervisor')
+    # Researcher always reports to Validator for auditing
+    graph.add_edge('researcher', 'validator')
+    
+    # Validator reports to supervisor for next decision
+    graph.add_edge('validator', 'supervisor')
 
     # Analyst output goes to critic for quality check
     graph.add_edge('analyst', 'critic')

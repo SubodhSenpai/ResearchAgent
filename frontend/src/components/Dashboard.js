@@ -6,6 +6,7 @@ import { startResearch, streamResearch, interruptResearch, getUserSessions, dele
 import Sidebar from './Sidebar';
 import AgentPipeline from './AgentPipeline';
 import ResearchResult from './ResearchResult';
+import ResearchTrace from './ResearchTrace';
 import DocumentManager from './DocumentManager';
 
 const AGENT_COLORS = {
@@ -14,6 +15,7 @@ const AGENT_COLORS = {
   researcher: '#3b82f6',
   analyst: '#8b5cf6',
   critic: '#ef4444',
+  validator: '#6366f1',
   writer: '#10b981',
   save_memory: '#ec4899',
   interrupt_check: '#f59e0b',
@@ -34,6 +36,7 @@ export default function Dashboard() {
   const [deleteConfirm, setDeleteConfirm] = useState(null); // session_id pending deletion
   const [documentsModalOpen, setDocumentsModalOpen] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(true);
+  const [isTraceOpen, setIsTraceOpen] = useState(false);
   const abortRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -168,19 +171,25 @@ export default function Dashboard() {
               <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
             </svg>
           </button>
-          <div className="flex-1 flex items-center justify-center">
-            {activeSession ? (
-              <span className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-full border ${
-                activeSession.status === 'completed' ? 'bg-success-bg text-success border-success/20'
-                : activeSession.status === 'running' ? 'bg-warning-bg text-warning border-warning/20'
-                : 'bg-info-bg text-info border-info/20'
-              }`}>
-                {activeSession.status}
-              </span>
-            ) : (
-              <span className="text-xs text-text-muted">New Research</span>
+            {activeSession && (
+              <div className="flex items-center gap-4">
+                <span className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-full border ${
+                  activeSession.status === 'completed' ? 'bg-success-bg text-success border-success/20'
+                  : activeSession.status === 'running' ? 'bg-warning-bg text-warning border-warning/20'
+                  : 'bg-info-bg text-info border-info/20'
+                }`}>
+                  {activeSession.status}
+                </span>
+                <button 
+                  onClick={() => setIsTraceOpen(true)}
+                  className="px-3 py-1 bg-accent/10 hover:bg-accent/20 text-accent border border-accent/20 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-1.5"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                  Debug Trace
+                </button>
+              </div>
             )}
-          </div>
+            {!activeSession && <span className="text-xs text-text-muted">New Research</span>}
           <span className="text-xs text-text-muted">{user?.username}</span>
         </header>
 
@@ -248,6 +257,17 @@ export default function Dashboard() {
                       <h4 className="font-semibold text-text-primary">Critic</h4>
                     </div>
                     <p className="text-sm text-text-secondary leading-relaxed">The quality assurance reviewer. It evaluates the research for accuracy, completeness, and bias, sending it back if it's not up to standard.</p>
+                  </div>
+
+                  {/* Validator */}
+                  <div className="bg-bg-glass hover:bg-bg-glass-hover border border-border-subtle p-5 rounded-2xl transition-colors">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-[#6366f1]/10 text-[#6366f1]">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                      </div>
+                      <h4 className="font-semibold text-text-primary">Evidence Auditor</h4>
+                    </div>
+                    <p className="text-sm text-text-secondary leading-relaxed">The quality controller. It audits every piece of evidence for contradictions and missing gaps, ensuring the research is complete and trustworthy.</p>
                   </div>
 
                   {/* Writer */}
@@ -401,6 +421,13 @@ export default function Dashboard() {
 
       {/* Document Manager Modal */}
       <DocumentManager isOpen={documentsModalOpen} onClose={() => setDocumentsModalOpen(false)} />
+      
+      {/* Research Trace Modal */}
+      <ResearchTrace 
+        sessionId={activeSession?.session_id}
+        isOpen={isTraceOpen}
+        onClose={() => setIsTraceOpen(false)}
+      />
     </div>
   );
 }

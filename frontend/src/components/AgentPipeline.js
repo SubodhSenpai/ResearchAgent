@@ -6,6 +6,7 @@ const AGENT_META = {
   researcher:   { icon: '🔍', label: 'Researcher',   color: '#3b82f6' },
   analyst:      { icon: '📊', label: 'Analyst',      color: '#8b5cf6' },
   critic:       { icon: '⚖️', label: 'Critic',       color: '#ef4444' },
+  validator:    { icon: '🛡️', label: 'Evidence Auditor', color: '#6366f1' },
   writer:       { icon: '✍️', label: 'Writer',       color: '#10b981' },
   save_memory:  { icon: '💾', label: 'Saving Session',color: '#ec4899' },
   interrupt_check: { icon: '⏸️', label: 'Interrupt Check', color: '#f59e0b' },
@@ -57,11 +58,14 @@ export default function AgentPipeline({ steps, isActive }) {
                 <div className="flex items-center gap-2 py-2 px-3.5 bg-bg-glass border border-border-subtle rounded-xl flex-1">
                   <span className="text-base">{meta.icon}</span>
                   <span className="text-[0.8125rem] font-semibold text-text-primary">{meta.label}</span>
-                  {step.iteration > 0 && (
-                    <span className="text-[0.6875rem] text-text-muted font-mono ml-auto bg-bg-glass px-2 py-0.5 rounded-full">
-                      iter {step.iteration}
+                    <span className="text-[0.6875rem] text-text-muted font-mono ml-auto bg-bg-glass px-2 py-0.5 rounded-full flex gap-3">
+                      {step.completeness_score !== undefined && step.completeness_score !== null && (
+                        <span className="text-accent font-bold">
+                          Completeness: {step.completeness_score}%
+                        </span>
+                      )}
+                      {step.iteration > 0 && <span>iter {step.iteration}</span>}
                     </span>
-                  )}
                 </div>
               </div>
             </div>

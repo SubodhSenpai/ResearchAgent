@@ -3,6 +3,7 @@ from typing import Any
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
+from utils.research_logger import ResearchLogger
 import logging
 
 from config.settings import settings
@@ -18,6 +19,7 @@ class BaseAgent(ABC):
     def __init__(self, name:str, system_prompt: str):
         self.name = name
         self.system_prompt = system_prompt
+        self.logger = logging.getLogger(f"agent.{name}")
         
         # Use Gemini for all agents
         try:
@@ -49,9 +51,13 @@ class BaseAgent(ABC):
         ])
         return prompt | self.llm
 
-    def _log(self, message:str):
-        self._call_count += 1
-        print(f'[{self.name}] Call #{self._call_count}: {message}')
+    def _log(self, message: str):
+        self.logger.info(f"[{self.name}] {message}")
+
+    def trace(self, session_id: str, step_type: str, data: dict):
+        """Log a trace event for the current session."""
+        if session_id and session_id != "unknown":
+            ResearchLogger(session_id).log_step(self.name, step_type, data)
 
     def __repr__(self):
         return f'{self.__class__.__name__}(name={self.name!r}, calls={self._call_count})'

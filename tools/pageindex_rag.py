@@ -86,6 +86,50 @@ def index_document(file_path: str, user_id: str) -> str:
     else:
         doc_id = client.index(str(file_path_obj))
 
+    # --- EORA SPRINT 1: Populate Evidence Graph ---
+    try:
+        from tools.evidence_graph import EvidenceGraph
+        from agents.base_agent import BaseAgent
+        import uuid
+        import json
+
+        # Get workspace path from settings
+        workspace_path = Path(settings.pageindex_workspace) / user_id
+        graph = EvidenceGraph(str(workspace_path))
+        
+        # Add Document Node
+        graph.add_node(doc_id, "Document", file_path_obj.name, metadata={"path": str(file_path_obj)})
+        
+        # Extract Structure and Claims
+        structure = client.get_document_structure(doc_id)
+        temp_llm = BaseAgent("Extractor", "").llm
+        
+        # Sample text for claim extraction (first few pages)
+        sample_text = client.get_page_content(doc_id, "1-3")
+        
+        extraction_prompt = f"""Extract 3-5 key entities and 3-5 atomic claims from this text.
+        Text: {sample_text[:2000]}
+        Output ONLY a JSON object with keys "entities" and "claims" (list of strings)."""
+        
+        response = temp_llm.invoke(extraction_prompt)
+        match = re.search(r'\{.*\}', response.content, re.DOTALL)
+        if match:
+            data = json.loads(match.group())
+            
+            for ent in data.get('entities', []):
+                ent_id = f"ent_{uuid.uuid4().hex[:8]}"
+                graph.add_node(ent_id, "Entity", ent)
+                graph.add_edge(doc_id, ent_id, "Mentions")
+                
+            for claim in data.get('claims', []):
+                claim_id = f"claim_{uuid.uuid4().hex[:8]}"
+                graph.add_node(claim_id, "Claim", claim, content=claim)
+                graph.add_edge(doc_id, claim_id, "Supports")
+                
+        logger.info(f"Populated evidence graph for doc {doc_id}")
+    except Exception as e:
+        logger.warning(f"Failed to populate evidence graph: {e}")
+
     logger.info(f"Indexed document: {file_path_obj.name} (doc_id: {doc_id})")
     return doc_id
 
@@ -183,13 +227,17 @@ def retrieve_documents_agentic(query: str, doc_ids: Optional[list[str]] = None, 
         import asyncio
         import concurrent.futures
 
-        system_prompt = """You are PageIndex, a document QA assistant.
-TOOL USE:
-- Call get_document() first to confirm status and page/line count.
-- Call get_document_structure() to identify relevant page ranges.
-- Call get_page_content(pages="5-7") with tight ranges; never fetch the whole document.
-- Before each tool call, output one short sentence explaining the reason.
-Answer based only on tool output. Be concise."""
+        system_prompt = """You are PageIndex, a document context assembly expert.
+        Your goal is to build a COHERENT EVIDENCE GRAPH, not just find isolated facts.
+
+        STRATEGY:
+        1. Call get_document() to understand the document's scope.
+        2. Call get_document_structure() to find relevant sections.
+        3. Call get_page_content() to fetch evidence.
+        4. RECONSTRUCTION: If a snippet ends mid-sentence or mid-thought, fetch the next page immediately.
+        5. CONTEXT ASSEMBLY: Always ensure you have the heading and surrounding context for any data point.
+
+        Answer based only on tool output. Be concise. Cite page numbers explicitly."""
 
         @function_tool
         def get_document() -> str:
@@ -251,6 +299,43 @@ Answer based only on tool output. Be concise."""
         return retrieve_documents_simple(query, [selected_doc_id], user_id=user_id)
 
 
+# ── Enhanced Nuanced Grader Prompt ───────────────────
+RAG_GRADER_PROMPT = """You are an elite research analyst evaluating document evidence.
+Evaluate the following document snippet in relation to the user's query.
+
+Query: {query}
+Snippet: {snippet}
+
+Output a JSON object with these EXACT keys:
+1. "relevance_score": (int 0-10) How directly this answers the query.
+2. "is_fragment": (bool) True if it starts or ends mid-sentence/mid-thought.
+3. "dependency": (string) "None", "Previous" (needs context before), "Next" (needs context after), or "Both".
+4. "content_type": (string) "Fact", "Data/Table", "Analysis", or "Noise".
+5. "reasoning": (string) 1-sentence explanation of the score.
+
+Output ONLY the JSON object."""
+
+def grade_snippet_nuanced(llm, query, snippet):
+    """Performs nuanced multi-dimensional grading of a RAG snippet."""
+    try:
+        from langchain_core.output_parsers import JsonOutputParser
+        parser = JsonOutputParser()
+        prompt = RAG_GRADER_PROMPT.format(query=query, snippet=snippet)
+        response = llm.invoke(prompt)
+        # Attempt to parse JSON
+        import json
+        import re
+        content = response.content
+        # Find JSON block if it exists
+        match = re.search(r'\{.*\}', content, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        return None
+    except Exception as e:
+        logger.warning(f"Nuanced grading failed: {e}")
+        return None
+
+
 def retrieve_documents_simple(query: str, doc_ids: Optional[list[str]] = None, k: int = 3, user_id: str = None) -> str:
     """
     Simple fallback retrieval using keyword matching over document structure.
@@ -275,28 +360,80 @@ def retrieve_documents_simple(query: str, doc_ids: Optional[list[str]] = None, k
     search_docs = {did: client.documents[did] for did in (doc_ids or client.documents.keys())}
 
     results = []
+    # Use a set to avoid duplicate pages for the same doc
+    processed_pages = set()
 
     for doc_id, doc_info in search_docs.items():
         try:
             structure_json = get_document_structure(doc_id, user_id)
             structure = json.loads(structure_json)
             doc_name = doc_info.get('doc_name', 'Unknown')
+            doc_desc = doc_info.get('doc_description', '').lower()
 
+            # 1. Search structure titles
             sections = _extract_sections_from_structure(structure, query, k)
 
+            # 2. Fallback: If no good title matches, check doc description
+            if not sections or max(s.get('score', 0) for s in sections) < 4:
+                query_lower = query.lower()
+                if any(word in doc_desc for word in set(query_lower.split()) if len(word) > 3):
+                    logger.info(f"Fallback: Query matches doc_description for {doc_name}. Returning first few pages.")
+                    # Add first page as a fallback result
+                    sections.append({'pages': '1', 'title': 'Introduction / Document Start', 'score': 5})
+
             for section in sections:
+                pages_str = section['pages']
+                if f"{doc_id}_{pages_str}" in processed_pages:
+                    continue
+                
                 try:
-                    content = retrieve_page_content(doc_id, section['pages'], user_id)
+                    # 1. Fetch the raw snippet
+                    content = retrieve_page_content(doc_id, pages_str, user_id)
+                    
+                    # 2. Nuanced Grading
+                    # Use LLM directly instead of abstract BaseAgent
+                    from langchain_google_genai import ChatGoogleGenerativeAI
+                    from config.settings import settings
+                    temp_llm = ChatGoogleGenerativeAI(
+                        model=settings.model_name,
+                        google_api_key=settings.gemini_api_key or None
+                    )
+                    grade = grade_snippet_nuanced(temp_llm, query, content)
+                    
+                    # Heuristic score if LLM grading fails
+                    score = grade.get('relevance_score', 0) if grade else section.get('score', 0)
+                    
+                    # 3. Neighbor Expansion (Highest ROI Upgrade)
+                    # If it's a fragment or has high relevance, fetch neighbors
+                    if score >= 6 or (grade and (grade.get('is_fragment') or grade.get('dependency') != "None")):
+                        try:
+                            # Parse pages_str to handle ranges or lists
+                            if '-' in pages_str:
+                                start_page = int(pages_str.split('-')[0])
+                                neighbor_pages = f"{max(1, start_page-1)}-{start_page+2}"
+                            else:
+                                curr_page = int(pages_str.split(',')[0])
+                                neighbor_pages = f"{max(1, curr_page-1)}-{curr_page+1}"
+                                
+                            logger.info(f"Expanding context for {doc_id} to pages {neighbor_pages}")
+                            content = retrieve_page_content(doc_id, neighbor_pages, user_id)
+                            pages_str = neighbor_pages
+                        except Exception:
+                            pass # Fallback to original content
+                    
                     results.append({
                         'doc_id': doc_id,
                         'doc_name': doc_name,
-                        'pages': section['pages'],
+                        'pages': pages_str,
                         'title': section.get('title', ''),
                         'content': content,
-                        'score': section.get('score', 0.0)
+                        'relevance_score': score,
+                        'grade': grade
                     })
+                    processed_pages.add(f"{doc_id}_{pages_str}")
+
                 except Exception as e:
-                    logger.warning(f"Failed to retrieve {doc_id} pages {section['pages']}: {e}")
+                    logger.warning(f"Failed to retrieve {doc_id} pages {pages_str}: {e}")
 
         except Exception as e:
             logger.warning(f"Failed to process document {doc_id}: {e}")
@@ -348,7 +485,9 @@ def _extract_sections_from_structure(structure: dict, query: str, k: int = 3) ->
         List of section info with page ranges
     """
     query_lower = query.lower()
-    query_words = set(w for w in query_lower.split() if len(w) > 2)
+    # Filter stopwords to focus on core concepts
+    stopwords = {'return', 'full', 'section', 'exactly', 'structured', 'document', 'what', 'where', 'how', 'the', 'and', 'for'}
+    query_words = set(w for w in query_lower.split() if len(w) > 2 and w not in stopwords)
 
     sections = []
 
@@ -363,11 +502,24 @@ def _extract_sections_from_structure(structure: dict, query: str, k: int = 3) ->
         score = 0.0
         if title:
             title_lower = title.lower()
+            # Exact phrase match (Highest)
             if query_lower in title_lower:
-                score += 10
+                score += 15
+            
+            # Key term matches
+            matches = 0
             for word in query_words:
                 if word in title_lower:
-                    score += 2
+                    matches += 1
+                    # Boost for core conceptual terms
+                    if word in ['memory', 'layer', 'htn', 'architecture', 'strategy']:
+                        score += 5
+                    else:
+                        score += 2
+            
+            # Bonus for multiple keyword matches
+            if matches >= 2:
+                score += 5
 
         if score > 0:
             sections.append({
@@ -440,9 +592,18 @@ def format_retrieval_results(results: list[dict]) -> str:
         score = result.get('relevance_score', 0.0)
 
         section_title = f"{title}" if title else f"Pages {pages}"
+        grade = result.get('grade', {})
+        reasoning = grade.get('reasoning', 'No reasoning available')
+        content_type = grade.get('content_type', 'General')
+        
         formatted.append(
-            f"[Document {i}] {doc_name} — {section_title} (pages {pages}, score: {score:.2f})\n"
-            f"Content: {content[:500]}..."
+            f"--- EVIDENCE SOURCE {i} ---\n"
+            f"Document: {doc_name}\n"
+            f"Section: {section_title} (pages {pages})\n"
+            f"Relevance Score: {score:.2f}/10\n"
+            f"Content Type: {content_type}\n"
+            f"AI Reasoning: {reasoning}\n"
+            f"Content:\n{content}\n"
         )
 
     return "\n\n".join(formatted)

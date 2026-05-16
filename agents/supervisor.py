@@ -23,12 +23,11 @@ Output a JSON object with keys:
 
 ROUTING LOGIC (think step by step):
 1. If NO search results exist → "researcher" (need to gather data)
-2. If search results are thin (< 3 results) or critic flagged research gaps → "researcher" (need more data)
+2. If evidence_completeness < 70% or validator recommends "TARGETED_SEARCH" → "researcher" (fill identified gaps)
 3. If search results exist BUT NO analysis → "analyst" (time to synthesize)
 4. If analysis exists AND quality_score >= 0.75 → "writer" (ready to write)
-5. If analysis exists AND quality_score < 0.75 AND research_gaps identified → "researcher" (fill gaps first)
-6. If analysis exists AND quality_score < 0.75 AND no gaps → "analyst" (re-analyze with critique)
-7. If iteration >= max_iterations → "writer" (force completion)
+5. If analysis exists AND contradictions identified → "researcher" (resolve conflicting evidence)
+6. If iteration >= max_iterations → "writer" (force completion)
 
 Output ONLY valid JSON, no other text.'''
 
@@ -67,6 +66,9 @@ class SupervisorAgent(BaseAgent):
         chat_history_str = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in chat_history]) if chat_history else "No previous history."
 
         # Use LLM for intelligent routing and planning
+        session_id = state.get('session_id', 'unknown')
+        self.trace(session_id, "input", {"query": state['query'], "iteration": next_iter})
+
         try:
             # ── Dynamic Prompting Safeguard ──────────────────────
             web_search_enabled = state.get('web_search_enabled', True)
@@ -75,53 +77,64 @@ class SupervisorAgent(BaseAgent):
                 strict_guideline = (
                     "\nSTRICT SAFEGUARD: Web search is DISABLED for this session. You MUST ONLY plan for and generate "
                     "sub-queries that focus on the user's local documents / knowledge base. Do NOT plan for any web-based "
-                    "investigation. Your sub-queries will be used to retrieve specific sections from local PageIndex documents.\n"
+                    "investigation.\n"
                 )
 
-            chain = self._build_chain(
-                "{strict_guideline}\n\n"
-                "{memory_context}\n\n"
-                "Chat History (Previous turns in this session):\n{chat_history}\n\n"
-                "Current User Query: {query}\n\n"
-                "Current State:\n"
-                "- Iteration: {iteration} / {max_iterations}\n"
-                "- Web search enabled: {web_search_enabled}\n"
-                "- Has search/KB results: {has_search} ({num_results} results)\n"
-                "- Has analysis: {has_analysis}\n"
-                "- Quality score: {quality_score}\n"
-                "- Research gaps: {gaps}\n"
-                "- Previous critique: {critique}\n"
-                "- Existing sub-queries: {existing_sub_queries}"
-            ) | self.parser
+            existing_knowledge = str(state.get('search_results', ''))[:2000]
+            confidence_level = state.get('quality_score', 0)
 
-            result = chain.invoke({
-                'strict_guideline': strict_guideline,
-                'memory_context': memory_context,
-                'web_search_enabled': web_search_enabled,
-                'chat_history': chat_history_str,
-                'query': state['query'],
-                'iteration': next_iter,
-                'max_iterations': state.get('max_iterations', 5),
-                'has_search': has_search,
-                'num_results': len(state.get('search_results', [])),
-                'has_analysis': has_analysis,
-                'quality_score': quality_score,
-                'gaps': ', '.join(research_gaps) if research_gaps else 'None identified',
-                'critique': state.get('critique', 'No critique yet'),
-                'existing_sub_queries': ', '.join(state.get('sub_queries', [])) if state.get('sub_queries') else 'None yet',
-            })
+            planner_template = """{strict_guideline}
+            
+            You are a Strategic Planner using Hierarchical Task Networks (HTN).
+            
+            GOAL: {query}
+            EXISTING KNOWLEDGE: {knowledge}
+            CONFIDENCE: {confidence}
+            GAPS: {gaps}
+            
+            PLANNING RULES:
+            1. Max depth: 2 levels (Objective -> Tactical Tasks).
+            2. Stay within iteration limit: {next_iter}/5.
+            
+            Output a JSON object:
+            - "strategic_objectives": ["obj1", "obj2"]
+            - "tactical_tasks": ["task1", "task2"]
+            - "next_agent": "researcher" | "analyst" | "writer"
+            - "reasoning": "Strategy explanation"
+            """
+            planner_prompt = planner_template.format(
+                strict_guideline=strict_guideline,
+                query=state['query'],
+                knowledge=existing_knowledge,
+                confidence=confidence_level,
+                gaps=state.get('evidence_gaps', []),
+                next_iter=next_iter
+            )
+            self.trace(session_id, "prompt", {"content": planner_prompt})
 
-            next_agent = str(result.get('next_agent', 'researcher')).strip().lower()
-            plan = result.get('plan', [])
-            sub_queries = result.get('sub_queries', [])
-            reasoning = result.get('reasoning', '')
-
+            chain = self._build_chain(planner_prompt)
+            result = chain.invoke({})
+            
+            import json, re
+            match = re.search(r'\{.*\}', result.content, re.DOTALL)
+            plan_data = json.loads(match.group()) if match else {}
+            
+            self.trace(session_id, "llm_response", {"raw": result.content, "parsed": plan_data})
+            
+            next_agent = plan_data.get('next_agent', 'researcher')
+            objectives = plan_data.get('strategic_objectives', [])
+            tasks = plan_data.get('tactical_tasks', [])
+            plan = objectives + tasks
+            sub_queries = plan_data.get('tactical_tasks', [])
+            reasoning = plan_data.get('reasoning', '')
+            
             # Validate next_agent
             if next_agent not in ('researcher', 'analyst', 'writer'):
                 next_agent = 'researcher'
 
         except Exception as e:
-            logger.warning(f"Supervisor LLM call failed, using fallback logic: {e}")
+            logger.warning(f"HTN Planning failed: {e}")
+            self.trace(session_id, "error", {"detail": str(e)})
             # Fallback to deterministic routing
             next_agent, plan, sub_queries, reasoning = self._fallback_routing(
                 state, has_search, has_analysis, quality_score, research_gaps
@@ -152,12 +165,16 @@ class SupervisorAgent(BaseAgent):
     def _fallback_routing(self, state, has_search, has_analysis, quality_score, research_gaps):
         """Deterministic fallback when LLM fails."""
         query = state['query']
+        validator_rec = state.get('validator_recommendation', 'FINALIZE')
 
         if not has_search:
             return 'researcher', [f"Search for: {query}"], [query], 'No search results yet — gathering data'
-        elif research_gaps and not has_analysis:
-            return 'researcher', [], [], 'Research gaps identified — gathering more data'
-        elif not has_analysis:
+        
+        # Respect validator recommendation in fallback
+        if validator_rec == 'TARGETED_SEARCH' and state.get('iteration', 0) < state.get('max_iterations', 5) - 1:
+            return 'researcher', [], [], 'Validator recommends targeted search to fill gaps'
+
+        if not has_analysis:
             return 'analyst', [], [], 'Have search results — synthesizing analysis'
         elif quality_score < 0.75 and research_gaps:
             return 'researcher', [], [], 'Quality below threshold with gaps — re-searching'

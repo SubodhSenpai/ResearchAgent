@@ -68,6 +68,7 @@ NODE_LABELS: dict[str, str] = {
     "researcher": "Researcher",
     "analyst": "Analyst",
     "critic": "Critic",
+    "validator": "Evidence Auditor",
     "writer": "Writer",
     "save_memory": "Saving session",
     "interrupt_check": "Processing interrupt",
@@ -240,6 +241,9 @@ def _research_ndjson_lines(initial: ResearchState, db_session: DBSession = None)
                         "node": node_name,
                         "label": label,
                         "iteration": node_out.get("iteration", 0),
+                        "completeness_score": node_out.get("completeness_score"),
+                        "evidence_gaps": node_out.get("evidence_gaps"),
+                        "contradictions": node_out.get("contradictions"),
                         "session_id": session_id,
                     },
                     ensure_ascii=False,
@@ -579,6 +583,39 @@ async def get_session_history(
             for h in history
         ],
     )
+
+
+@app.get("/research/{session_id}/logs")
+async def get_session_logs(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+):
+    """Retrieve research session logs for debugging."""
+    session_manager = SessionManager(db)
+    session = session_manager.get_session(session_id)
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Verify ownership
+    if not verify_ownership(current_user.user_id, session.user_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    log_file = Path("logs") / "research" / f"{session_id}.jsonl"
+    if not log_file.exists():
+        return {"logs": []}
+
+    try:
+        logs = []
+        with open(log_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    logs.append(json.loads(line))
+        return {"logs": logs}
+    except Exception as e:
+        logger.error(f"Failed to read logs for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read logs")
 
 
 @app.delete("/sessions/{session_id}", response_model=MessageResponse)

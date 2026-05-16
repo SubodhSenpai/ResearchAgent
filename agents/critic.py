@@ -44,6 +44,8 @@ class CriticAgent(BaseAgent):
 
     def run(self, state: dict) -> dict:
         iteration = state.get('iteration', 1)
+        session_id = state.get('session_id', 'unknown')
+        self.trace(session_id, "input", {"query": state['query'], "iteration": iteration})
         self._log(f'Evaluating analysis quality (iteration {iteration})')
 
         try:
@@ -75,6 +77,8 @@ class CriticAgent(BaseAgent):
                 for i, s in enumerate(source_urls[:15])
             ]) if source_urls else "No source tracking available."
 
+            self.trace(session_id, "prompt", {"content": "Critic Evaluation Prompt"})
+
             result = chain.invoke({
                 'memory_context': memory_context,
                 'query': state['query'],
@@ -82,6 +86,8 @@ class CriticAgent(BaseAgent):
                 'source_list': source_list,
                 'analysis': state.get('analysis', 'No analysis provided.')
             })
+            
+            self.trace(session_id, "llm_response", {"parsed": result})
 
             # Extract and validate quality score
             try:
@@ -123,6 +129,7 @@ class CriticAgent(BaseAgent):
             }
 
         except Exception as e:
+            self.trace(session_id, "error", {"detail": str(e)})
             error_msg = f'Critic parsing error: {str(e)[:100]}'
             logger.error(error_msg)
 

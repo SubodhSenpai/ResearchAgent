@@ -89,11 +89,21 @@ class ResearchAgent(BaseAgent):
             unique_queries = unique_queries[:6]
 
             logger.info(f"Executing {len(unique_queries)} search queries: {[q[:50] for q in unique_queries]}")
+            session_id = state.get('session_id', 'unknown')
+            self.trace(session_id, "input", {"queries": unique_queries, "iteration": iteration})
 
             # ── Execute multi-query search ────────────────────────
             web_search_enabled = state.get('web_search_enabled', True)
             if web_search_enabled:
                 search_results, source_urls = search_web_multi(unique_queries, max_results_per_query=5)
+                self.trace(session_id, "retrieval", {
+                    "source": "web", 
+                    "count": len(search_results),
+                    "results": [
+                        {"title": r.get('title'), "url": r.get('url'), "snippet": str(r.get('content', ''))[:200]} 
+                        for r in search_results[:5]
+                    ]
+                })
             else:
                 logger.info("Web search disabled — skipping external search")
                 search_results, source_urls = [], []
@@ -134,6 +144,11 @@ class ResearchAgent(BaseAgent):
                         seen_docs.add(d)
                         rag_docs.append(d)
             logger.info(f"Retrieved {len(rag_docs)} unique document sections from PageIndex")
+            self.trace(session_id, "retrieval", {
+                "source": "pageindex", 
+                "count": len(rag_docs),
+                "results": [str(d)[:300] for d in rag_docs[:5]]
+            })
 
             # Format chat history
             chat_history = state.get('chat_history', [])
@@ -161,20 +176,23 @@ class ResearchAgent(BaseAgent):
                 "Research gaps to fill (from previous critique):\n{gaps}"
             )
 
-            # Format search results — show MORE data to the LLM (up to 12 results, 800 chars each)
+            # Format search results — show MORE data to the LLM (up to 12 results, 1500 chars each)
             search_str = '\n\n'.join([
                 f"[Source {i+1}] {r.get('title', 'Untitled')}\n"
                 f"URL: {r.get('url', 'N/A')}\n"
-                f"Content: {str(r.get('content', ''))[:800]}"
+                f"Content: {str(r.get('content', ''))[:1500]}"
                 for i, r in enumerate(all_results[:12])
             ]) if all_results else "No search results available."
 
             docs_str = '\n\n'.join([
-                f"[Document {i+1}]: {str(d)[:600]}"
-                for i, d in enumerate(rag_docs[:6])
+                f"[Document {i+1}]: {str(d)[:5000]}"
+                for i, d in enumerate(rag_docs[:8])
             ]) if rag_docs else "No documents available."
 
             gaps_str = '\n'.join([f"- {g}" for g in research_gaps]) if research_gaps else "No specific gaps identified yet."
+            
+            prompt_content = f"WEB:\n{search_str}\n\nDOCS:\n{docs_str}"
+            self.trace(session_id, "prompt", {"content": prompt_content})
 
             result = chain.invoke({
                 'strict_guideline': strict_guideline,
@@ -187,6 +205,8 @@ class ResearchAgent(BaseAgent):
                 'docs': docs_str,
                 'gaps': gaps_str,
             })
+
+            self.trace(session_id, "llm_response", {"content": result.content})
 
             summary = result.content
             summary_preview = summary[:200] + "..." if len(summary) > 200 else summary

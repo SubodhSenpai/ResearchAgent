@@ -23,6 +23,7 @@ class Settings:
     temperature: float = 0.3
     max_iterations: int = 5
     quality_threshold: float = 0.7
+    enable_research_logging: bool = field(default_factory=lambda: os.getenv("ENABLE_RESEARCH_LOGGING", "false").lower() == "true")
 
     # Authentication & JWT
     jwt_secret: str = field(default_factory=lambda: os.getenv("JWT_SECRET", "").strip())

@@ -30,6 +30,8 @@ class WriterAgent(BaseAgent):
         super().__init__('Writer', WRITER_PROMPT)
 
     def run(self, state: dict) -> dict:
+        session_id = state.get('session_id', 'unknown')
+        self.trace(session_id, "input", {"query": state['query'], "iteration": state.get('iteration', 0)})
         self._log('Composing final answer')
 
         try:
@@ -72,6 +74,7 @@ class WriterAgent(BaseAgent):
                 'Quality Assessment:\n{critique}\n\n'
                 'Quality Score: {quality_score:.2f}/1.0\n\n'
                 'Available Sources for Citation (USE THESE URLs):\n{sources}\n\n'
+                'Raw local documents (for structural fidelity):\n{docs}\n\n'
                 'Raw search highlights (for additional detail):\n{search_highlights}'
             )
 
@@ -89,14 +92,22 @@ class WriterAgent(BaseAgent):
                 for i, s in enumerate(source_urls[:20])
             ]) if source_urls else "No sources available."
 
-            # Include search result highlights for additional context
+            # Include search result highlights and raw local docs for maximum fidelity
             search_results = state.get('search_results', [])
             highlights_str = '\n\n'.join([
                 f"[Source {i+1}] {r.get('title', 'Untitled')}\n"
                 f"URL: {r.get('url', 'N/A')}\n"
-                f"{str(r.get('content', ''))[:600]}"
+                f"Content: {str(r.get('content', ''))[:1500]}"
                 for i, r in enumerate(search_results[:10])
-            ]) if search_results else "No search results."
+            ]) if search_results else "No search highlights available."
+
+            documents = state.get('documents', [])
+            docs_str = '\n\n'.join([
+                f"[Document {i+1}]: {str(d)[:5000]}"
+                for i, d in enumerate(documents[:6])
+            ]) if documents else "No local documents available."
+
+            self.trace(session_id, "prompt", {"content": "Writer Final Report Prompt"})
 
             result = chain.invoke({
                 'strict_guideline': strict_guideline,
@@ -109,10 +120,12 @@ class WriterAgent(BaseAgent):
                 'critique': critique,
                 'quality_score': quality_score,
                 'sources': sources_str,
+                'docs': docs_str,
                 'search_highlights': highlights_str,
             })
 
             final_answer = result.content
+            self.trace(session_id, "llm_response", {"content_length": len(final_answer)})
             logger.info(f"Final answer composed ({len(final_answer)} chars, quality={quality_score:.2f})")
 
             return {
@@ -122,6 +135,7 @@ class WriterAgent(BaseAgent):
             }
 
         except Exception as e:
+            self.trace(session_id, "error", {"detail": str(e)})
             error_msg = f'Writer error: {str(e)[:100]}'
             logger.error(error_msg)
 

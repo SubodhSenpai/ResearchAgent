@@ -44,6 +44,8 @@ class AnalystAgent(BaseAgent):
 
     def run(self, state: dict) -> dict:
         iteration = state.get('iteration', 0)
+        session_id = state.get('session_id', 'unknown')
+        self.trace(session_id, "input", {"query": state['query'], "iteration": iteration})
         self._log(f'Synthesizing findings (iteration {iteration})')
 
         try:
@@ -80,6 +82,10 @@ class AnalystAgent(BaseAgent):
                 'Knowledge base documents:\n{documents}\n\n'
                 'Available sources for citation:\n{sources}\n\n'
                 'Previous critique feedback (address these issues):\n{critique}\n\n'
+                'Validator Findings (Audit):\n'
+                '- Completeness: {completeness_score}%\n'
+                '- Evidence Gaps: {evidence_gaps}\n'
+                '- Contradictions found: {contradictions}\n\n'
                 'Research gaps to address:\n{gaps}'
             )
 
@@ -92,18 +98,18 @@ class AnalystAgent(BaseAgent):
             plan = state.get('plan', [])
             sub_queries = state.get('sub_queries', [])
 
-            # Format search results — show up to 15 results, 800 chars each
+            # Format search results — show up to 15 results, 1500 chars each
             search_str = '\n\n'.join([
                 f"[Source {i+1}] {r.get('title', 'Untitled')}\n"
                 f"URL: {r.get('url', 'N/A')}\n"
-                f"Content: {str(r.get('content', ''))[:800]}"
+                f"Content: {str(r.get('content', ''))[:1500]}"
                 for i, r in enumerate(search_results[:15])
             ]) if search_results else "No search results available."
 
-            # Format documents — more generous limits
+            # Format documents — significantly more generous limits
             docs_str = '\n\n'.join([
-                f"[Document {i+1}]: {str(d)[:600]}"
-                for i, d in enumerate(documents[:6])
+                f"[Document {i+1}]: {str(d)[:5000]}"
+                for i, d in enumerate(documents[:8])
             ]) if documents else "No documents available."
 
             # Format source URLs for citation reference
@@ -117,6 +123,8 @@ class AnalystAgent(BaseAgent):
             sub_queries_str = ', '.join(sub_queries) if sub_queries else "Single query search"
             gaps_str = '\n'.join([f"- {g}" for g in research_gaps]) if research_gaps else "None identified."
 
+            self.trace(session_id, "prompt", {"content": "Analyst Synthesis Prompt (Dynamic context applied)"})
+
             result = chain.invoke({
                 'strict_guideline': strict_guideline,
                 'memory_context': memory_context,
@@ -129,9 +137,13 @@ class AnalystAgent(BaseAgent):
                 'sources': sources_str,
                 'critique': critique_str,
                 'gaps': gaps_str,
+                'completeness_score': state.get('completeness_score', 0),
+                'evidence_gaps': ', '.join(state.get('evidence_gaps', [])) if state.get('evidence_gaps') else 'None',
+                'contradictions': str(state.get('contradictions', [])),
             })
 
             analysis_text = result.content
+            self.trace(session_id, "llm_response", {"content": analysis_text})
             summary = analysis_text[:250] + "..." if len(analysis_text) > 250 else analysis_text
 
             logger.info(f"Analysis completed (iteration {iteration}): {summary[:150]}")
@@ -143,6 +155,7 @@ class AnalystAgent(BaseAgent):
             }
 
         except Exception as e:
+            self.trace(session_id, "error", {"detail": str(e)})
             error_msg = f'Analyst error: {str(e)[:150]}'
             logger.error(error_msg)
             return {
