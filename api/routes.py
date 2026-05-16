@@ -47,9 +47,7 @@ app = FastAPI(title="AI Research Assistant", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://researchagent-production-13d5.up.railway.app",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
+        "https://research-agent-eight-rho.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
