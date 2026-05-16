@@ -2,6 +2,7 @@ import logging
 from typing import Optional
 from fastapi import Request, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from starlette.middleware.base import BaseHTTPMiddleware
 from auth.jwt_handler import JWTHandler
 from auth.database import get_db
 from auth.models import User
@@ -104,3 +105,16 @@ def verify_ownership(user_id: str, resource_user_id: str) -> bool:
         True if user owns resource, False otherwise
     """
     return str(user_id) == str(resource_user_id)
+
+
+class NormalizePathMiddleware(BaseHTTPMiddleware):
+    """Collapse duplicate slashes so //auth/login matches /auth/login."""
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.scope.get("path", "")
+        if "//" in path:
+            normalized = path
+            while "//" in normalized:
+                normalized = normalized.replace("//", "/")
+            request.scope["path"] = normalized
+        return await call_next(request)

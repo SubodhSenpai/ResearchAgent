@@ -21,7 +21,7 @@ from graph.state import ResearchState
 from auth.database import get_db, init_db, close_db
 from auth.models import User, Session as DBSession_Model, UserDocument
 from auth.schemas import MessageResponse
-from api.middleware import get_current_user, verify_ownership
+from api.middleware import get_current_user, verify_ownership, NormalizePathMiddleware
 from api.auth_routes import router as auth_router
 from memory.session_manager import SessionManager
 from tools.pageindex_rag import index_document, list_indexed_documents
@@ -62,6 +62,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Runs before routing; fixes //auth/login when API URL has a trailing slash
+app.add_middleware(NormalizePathMiddleware)
 
 # Include auth routes
 app.include_router(auth_router)

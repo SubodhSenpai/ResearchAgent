@@ -10,6 +10,9 @@ if (API_BASE && !API_BASE.startsWith('http')) {
   API_BASE = `https://${API_BASE}`;
 }
 
+// Avoid //auth/login when env URL ends with /
+API_BASE = API_BASE.replace(/\/+$/, '');
+
 // ── Token helpers ──────────────────────────────
 function getToken() {
   if (typeof window === 'undefined') return null;
