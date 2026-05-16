@@ -149,11 +149,10 @@ export default function DocumentManager({ isOpen, onClose }) {
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
-                dragOverRef.current
+              className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${dragOverRef.current
                   ? 'border-accent bg-accent/5'
                   : 'border-border-subtle hover:border-accent/50 hover:bg-bg-glass-hover'
-              }`}
+                }`}
             >
               <input
                 ref={fileInputRef}
