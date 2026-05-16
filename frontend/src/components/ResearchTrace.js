@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getResearchLogs } from '../lib/api';
+import { getResearchLogs } from '@/lib/api';
 
 const ResearchTrace = ({ sessionId, isOpen, onClose }) => {
   const [logs, setLogs] = useState([]);
