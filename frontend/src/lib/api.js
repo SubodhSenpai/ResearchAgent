@@ -3,7 +3,12 @@
  * Handles auth, research, sessions, and streaming endpoints
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+let API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+// Ensure absolute URL
+if (API_BASE && !API_BASE.startsWith('http')) {
+  API_BASE = `https://${API_BASE}`;
+}
 
 // ── Token helpers ──────────────────────────────
 function getToken() {
